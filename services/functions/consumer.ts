@@ -1,7 +1,7 @@
-
 import dynamodb from '../util/dynamodb';
-import { DynamoDB } from "aws-sdk";
-import { Table } from "@serverless-stack/node/table";
+
+
+//Exponential Backoff Function
 
 const exponentialBackoff = (retries) => {
     return new Promise((resolve) => {
@@ -10,21 +10,28 @@ const exponentialBackoff = (retries) => {
 }
 
 
+//Retrieve Messages from the Queue
 const retrieveMessages = async (event) => {
+
+    //Initally Set retires value=0
     let retries = 0;
+
     while (true) {
-        try {
-            if (!event.Records) {
-                break;
-            }
-            for (let i = 0; i < event.Records.length; i++) {
-                try {
-                    const randomNumber = Math.random();
-                    if (randomNumber < 0.3) {
-                        throw new Error('Random failure');
-                    }
-                    console.log(`Processing message: ${JSON.parse(event.Records[i].body)}`);
-                } catch (err) {
+
+        for (let i = 0; i < event.Records.length; i++) {
+            try {
+                const randomNumber = Math.random();
+                if (randomNumber < 0.3) {
+                    throw new Error('Random failure');
+                }
+                console.log(`Processing message: ${JSON.parse(event.Records[i].body)}`);
+            } catch (err) {
+                if (retries < 3) {
+                    retries++;
+                    console.log(`Retrying after ${Math.pow(1.5, retries)* 60} seconds...`);
+                    await exponentialBackoff(retries);
+                } else {
+                    console.log(`Exceeded maximum number of retries. Storing Message to DB with message Id:${event.Records[i].messageId}`)
                     const params = {
                         TableName: process.env.TABLE_NAME,
                         Item: {
@@ -34,18 +41,9 @@ const retrieveMessages = async (event) => {
                             createdAt: Date.now(),
                         },
                     }
-                    await dynamodb.put(params);
+                    return await dynamodb.put(params);
                 }
-            }
-            retries = 0;
-        } catch (err) {
-            if (retries < 3) {
-                retries++;
-                console.log(`Retrying after ${Math.pow(2, retries)} seconds...`);
-                await exponentialBackoff(retries);
-            } else {
-                console.log(`Exceeded maximum number of retries: ${err}`)
-                
+
             }
         }
     }
